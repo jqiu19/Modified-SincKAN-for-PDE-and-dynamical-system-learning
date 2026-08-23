@@ -1,0 +1,1 @@
+# Modified-SincKAN-for-PDE-and-dynamical-system-learning
