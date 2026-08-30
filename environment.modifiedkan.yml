@@ -1,0 +1,17 @@
+name: modifiedkan
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - numpy=1.26.4
+  - scipy=1.11.4
+  - matplotlib=3.8.4
+  - pandas=2.2.2
+  - pip:
+      - jax==0.4.20
+      - jaxlib==0.4.20
+      - equinox==0.11.2
+      - optax==0.1.7
+      - wandb==0.23.1

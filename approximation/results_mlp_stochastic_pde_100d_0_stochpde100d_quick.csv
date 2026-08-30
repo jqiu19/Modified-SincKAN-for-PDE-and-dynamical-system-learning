@@ -1,0 +1,2 @@
+datatype,network,seed,final_loss_mean,training_time,total_ite,test_mse,test_rmse,test_relative
+stochastic_pde_100d,mlp,0,5.546706961467862e-05,52.573551654815674,20000,6.0104577e-07,0.00077527144,0.010649535

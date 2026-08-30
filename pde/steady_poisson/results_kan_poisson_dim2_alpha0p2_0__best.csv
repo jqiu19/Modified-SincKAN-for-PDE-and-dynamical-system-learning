@@ -1,0 +1,2 @@
+datatype,network,seed,alpha,dim,final_loss_mean,training_time,total_param,total_ite,test_mse,test_rmse,test_relative,best_test_mse,best_test_rmse,best_test_relative,best_step
+poisson,kan,0,0.2,2,38756.60546875,958.3948891162872,10080,2500,374.0296,19.339846,20.68299,374.02960205078125,19.339845657348633,20.6829891204834,2500

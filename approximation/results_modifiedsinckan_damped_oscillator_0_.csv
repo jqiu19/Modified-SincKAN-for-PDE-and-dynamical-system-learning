@@ -1,0 +1,2 @@
+datatype,network,seed,final_loss_mean,training_time,total_ite,train_mse,train_rmse,train_relative,test_mse,test_rmse,test_relative
+damped_oscillator,modifiedsinckan,0,0.017241040244698524,23.722503423690796,2500,7.4331285e-05,0.0086215595,0.034413684,7.4331285e-05,0.0086215595,0.034413684

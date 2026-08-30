@@ -1,0 +1,2 @@
+datatype,network,seed,final_loss_mean,training_time,total_ite,test_mse,test_rmse,test_relative
+ode_4d,sinckan,0,0.0763760358095169,21.390382289886475,10000,0.0014340993,0.0378695,0.1695836

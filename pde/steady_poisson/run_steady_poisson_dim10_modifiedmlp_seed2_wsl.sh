@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "/mnt/c/Users/Qiu Jingwei/Documents/New project/SincKAN-main/SincKAN-main/pde"
+export PATH="/root/modifiedkan-gpu/lib/python3.10/site-packages/nvidia/cuda_nvcc/bin:${PATH}"
+
+/root/modifiedkan-gpu/bin/python steady_poisson.py --mode train --network modifiedmlp --datatype poisson --dim 10 --alpha 1.0 --features 128 --layers 6 --epochs 2000 --ite 20 --n_interior 2000 --n_boundary 100 --seed 2 --device 0

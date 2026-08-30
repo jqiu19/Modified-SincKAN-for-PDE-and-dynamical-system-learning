@@ -1,0 +1,2 @@
+datatype,network,seed,final_loss_mean,training_time,total_ite,test_mse,test_rmse,test_relative
+poisson_2d_solution,mlp,2,9.787589078769088e-05,219.0004518032074,100000,6.97715e-07,0.0008352933,0.0016465642

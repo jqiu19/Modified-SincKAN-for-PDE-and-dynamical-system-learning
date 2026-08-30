@@ -1,0 +1,2 @@
+datatype,network,seed,alpha,dim,final_loss_mean,training_time,total_param,total_ite,test_mse,test_rmse,test_relative
+poisson,modifiedsinckan,2,1.0,10,0.033977434039115906,2293.0838038921356,323845,40000,0.0006763943,0.026007582,0.03609822

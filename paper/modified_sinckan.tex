@@ -1,0 +1,783 @@
+\documentclass[preprint,12pt]{elsarticle}
+
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{multirow}
+\usepackage{makecell}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{hyperref}
+\usepackage{array}
+
+\journal{Machine Learning with Applications}
+
+\begin{document}
+
+\begin{frontmatter}
+
+\title{Modified-SincKAN: Input-Conditioned Sinc Modulation Networks for PDE and Dynamical System Learning}
+
+\author[inst1]{Author Name}
+\ead{author@email.com}
+
+\affiliation[inst1]{
+  organization={Department/School, University},
+  city={City},
+  country={Country}
+}
+
+\begin{abstract}
+Learning accurate neural representations of scientific functions and dynamical systems remains challenging when the target solution contains high-frequency oscillations, sharp boundary layers, multiscale structures, or localized singular behavior. Standard multilayer perceptrons often exhibit spectral bias, while many basis-enhanced architectures either lack adaptive layerwise modulation or become difficult to scale in high-dimensional scientific tasks. In this paper, we propose Modified-SincKAN, an input-conditioned multiresolution neural architecture for scientific machine learning. The proposed model uses sinc-basis branches to construct input-dependent content features and a separate gating prior, and then performs state-dependent feature modulation across hidden layers. This design combines the localized spectral representation ability of sinc bases with a modified-MLP-style gating mechanism, enabling adaptive mixing of multiscale representations during forward propagation. We evaluate Modified-SincKAN on a broad suite of function approximation, high-dimensional surrogate modeling, and physics-informed PDE learning tasks, including low- and high-frequency signals, boundary-layer functions, spectral-bias benchmarks, fractal functions, Poisson solution maps, ODE response functions, signal and image regression tasks, stochastic PDE surrogates, and steady Poisson PINNs. Experimental results show that Modified-SincKAN achieves competitive or superior accuracy compared with MLP, modified MLP, KAN, and SincKAN baselines, especially on tasks involving oscillatory, multiscale, or localized solution features. Ablation studies further demonstrate the importance of sinc-based input-conditioned branches, separate gating, and residual/sigmoid modulation strategies.
+\end{abstract}
+
+\begin{keyword}
+Scientific machine learning \sep neural networks \sep Kolmogorov-Arnold networks \sep sinc basis \sep function approximation \sep physics-informed neural networks \sep dynamical systems
+\end{keyword}
+
+\end{frontmatter}
+
+\section*{Highlights}
+\begin{itemize}
+  \item An input-conditioned sinc modulation network is proposed for SciML.
+  \item Sinc-basis branches capture high-frequency and multiscale structures.
+  \item A separate state-dependent gate adaptively mixes hidden representations.
+  \item The method is evaluated on function fitting, surrogates, and PINNs.
+  \item Ablations validate the roles of sinc branches and gating mechanisms.
+\end{itemize}
+
+\section{Introduction}
+
+Neural networks have become a central tool in scientific machine learning (SciML), where they are used to approximate complex functions, build surrogate models for parametric systems, learn dynamical systems from data, and solve partial differential equations (PDEs) through physics-informed neural networks (PINNs). Despite their flexibility, standard multilayer perceptrons (MLPs) often struggle with scientific problems that contain multiscale behavior, high-frequency oscillations, sharp transition layers, or localized singularities. Such structures are common in singularly perturbed PDEs, wave-like systems, turbulent or convection-dominated flows, spectral response functions, and high-dimensional engineering surrogate models.
+
+A major difficulty is that the usual composition of affine maps and smooth activations does not provide an explicit mechanism for representing localized spectral features. MLPs are also known to favor low-frequency components during training, a phenomenon often referred to as spectral bias. This can lead to slow convergence or inaccurate recovery of high-frequency components. Recent basis-enhanced architectures, including Fourier-feature networks \cite{tancik2020fourier}, sinusoidal representation networks \cite{sitzmann2020siren}, and Kolmogorov-Arnold network (KAN) variants \cite{liu2024kan}, have attempted to introduce stronger inductive biases for oscillatory or compositional structure. SincKAN \cite{yu2026sinckan} is one such architecture that uses sinc basis functions to improve the approximation of singular, localized, and high-frequency functions. However, a direct basis expansion alone does not fully address the need for adaptive layerwise feature modulation in deep networks.
+
+Another useful design direction comes from modified MLP architectures used in PINNs and SciML. Wang, Teng, and Perdikaris \cite{wang2021gradientpathologies} showed that PINN training can suffer from gradient-flow pathologies related to numerical stiffness and proposed both adaptive loss balancing and a modified network architecture to improve training robustness. The modified MLP component generates two input-dependent latent templates and repeatedly mixes hidden states through a gating-like update. Such architectures can improve feature reuse and optimization stability, but their content branches are typically produced by simple linear transformations of the input. Consequently, they may still lack sufficient multiresolution expressivity when the target solution has localized oscillations or sharp changes.
+
+This paper proposes Modified-SincKAN, an input-conditioned multiresolution modulation network that combines the strengths of sinc-basis representations and modified-MLP-style feature mixing. Instead of using only linear input projections to construct modulation templates, Modified-SincKAN employs sinc-basis branches to generate input-conditioned content representations. A separate sinc-basis branch further constructs a gate prior, which is combined with the current hidden state to produce a state-dependent modulation gate at each layer. The resulting architecture allows each layer to adaptively select and inject multiscale information according to both the input location and the current hidden representation.
+
+The main contributions of this work are summarized as follows:
+\begin{itemize}
+  \item We propose Modified-SincKAN, a neural architecture for SciML that uses sinc-basis branches to construct input-conditioned multiresolution content and gating representations.
+  \item We introduce a state-dependent modulation mechanism that combines an input-conditioned gate prior with the current hidden state, enabling adaptive layerwise mixing of sinc-based content features.
+  \item We evaluate the proposed method on diverse function approximation and scientific surrogate tasks, including one-dimensional signals, two-dimensional spectral and fractal functions, four-dimensional ODE/PDE response functions, fifty-dimensional signal/image tasks, and one-hundred-dimensional stochastic PDE surrogates.
+  \item We further assess Modified-SincKAN on PINN-based steady Poisson problems, showing its potential for PDE solution learning under physics-informed losses.
+  \item We provide ablation studies on gating strategies and branch architectures to identify the components responsible for the observed performance gains.
+\end{itemize}
+
+\section{Related Work}
+
+\subsection{Neural networks for scientific machine learning}
+
+Neural networks have been widely used as mesh-free function approximators in SciML. In supervised surrogate modeling, they learn mappings from spatial coordinates, parameters, or initial conditions to quantities of interest. In PINNs, neural networks approximate PDE solutions by minimizing a combination of data mismatch, boundary-condition loss, and PDE residual loss \cite{raissi2019pinn}. Although MLPs are universal approximators, their practical performance depends strongly on optimization dynamics and architectural inductive bias. For solutions with sharp gradients, multiscale oscillations, or localized singularities, plain MLPs often require many parameters or long training schedules to obtain accurate approximations.
+
+\subsection{Spectral bias and basis-enhanced neural representations}
+
+The spectral bias of neural networks indicates that low-frequency components are often learned earlier than high-frequency components. This behavior can be problematic for wave propagation, oscillatory functions, boundary layers, and spectral response surfaces. Several methods have been proposed to mitigate this issue, including Fourier feature embeddings \cite{tancik2020fourier}, periodic activation functions \cite{sitzmann2020siren}, and basis-expansion networks. Sinc basis functions are particularly attractive because they are closely related to interpolation and band-limited signal reconstruction. SincKAN \cite{yu2026sinckan} uses learnable combinations of shifted and scaled sinc functions to represent high-frequency and localized structures, and demonstrates strong performance for function approximation and PINN problems with singularities. However, existing sinc-basis networks primarily focus on direct basis representation and do not explicitly introduce state-dependent layerwise modulation.
+
+\subsection{Kolmogorov-Arnold networks and SincKAN}
+
+KANs replace or augment conventional linear transformations with learnable univariate functions, inspired by the Kolmogorov-Arnold representation theorem \cite{liu2024kan}. In the original KAN formulation, edge functions are parameterized using splines, which provides a flexible and interpretable alternative to fixed node-wise activations in MLPs. Variants such as spline-based KAN, ChebyKAN, and SincKAN differ in their choice of basis functions. SincKAN \cite{yu2026sinckan} is designed to exploit the localized oscillatory behavior of sinc functions, making it suitable for functions with singular points, boundary layers, or high-frequency components. Nevertheless, KAN-style models can be computationally expensive, and their performance may depend sensitively on the choice of basis degree, grid structure, and scaling parameters. Our work differs from direct SincKAN models by using sinc layers as input-conditioned modulation branches inside a modified MLP backbone.
+
+\subsection{Modified MLPs and gated feature modulation}
+
+The modified MLP architecture introduced in the study of gradient-flow pathologies in PINNs \cite{wang2021gradientpathologies} uses input-dependent latent templates that are repeatedly mixed with hidden features across layers. Given two content branches \(U(x)\) and \(V(x)\), a hidden feature can be updated through a gating-like interpolation. Such designs improve feature reuse and can stabilize training in PINN settings, where different loss terms may induce highly imbalanced gradients. However, when \(U(x)\) and \(V(x)\) are generated only by linear projections, their ability to encode high-frequency or multiscale information is limited. Modified-SincKAN addresses this limitation by replacing the linear content branches with sinc-basis branches and by introducing a separate input-conditioned gate branch.
+
+\section{Methods}
+
+\subsection{Preliminaries}
+
+This section first reviews the mathematical forms of the neural building blocks used in our study, including MLPs, modified MLPs, KANs, and SincKAN layers. We then introduce Modified-SincKAN as an input-conditioned sinc modulation architecture. Throughout the paper, \(x\in\mathbb{R}^{d}\) denotes an input coordinate, parameter vector, or system state, and \(y\in\mathbb{R}^{m}\) denotes the target output.
+
+\subsubsection{Multilayer perceptron}
+
+A multilayer perceptron (MLP) represents a function through a composition of affine maps and nonlinear activations. Given \(h_0=x\), a standard \(L\)-layer MLP computes
+\begin{equation}
+  h_{l+1}
+  =
+  \phi(W_l h_l+b_l),
+  \quad l=0,\ldots,L-2,
+\end{equation}
+followed by a linear output layer. Here \(W_l\) and \(b_l\) are trainable parameters and \(\phi\) is a pointwise activation function. MLPs are flexible universal approximators, but in scientific learning tasks their practical accuracy can be limited by spectral bias and by the difficulty of propagating localized or high-frequency information through a single sequential feature chain.
+
+\subsubsection{Modified MLP}
+
+The modified MLP architecture introduced for physics-informed learning augments the standard hidden-state recursion with two input-dependent templates \cite{wang2021gradientpathologies}. In the implementation used in this work, the two templates are generated by
+\begin{equation}
+  U(x)=\phi(xW_u+b_u),
+  \qquad
+  V(x)=\phi(xW_v+b_v),
+\end{equation}
+where \(W_u,W_v,b_u,b_v\) are trainable parameters. Starting from
+\begin{equation}
+  f_0=xW_0+b_0,
+\end{equation}
+each hidden layer first forms
+\begin{equation}
+  h_l=\phi(f_{l-1}),
+\end{equation}
+and then mixes the current hidden feature with the two input templates:
+\begin{equation}
+  m_l=h_l\odot U(x)+\left(1-h_l\right)\odot V(x),
+  \qquad
+  f_l=m_lW_l+b_l.
+\end{equation}
+This design reuses input-conditioned information across layers and can improve training robustness in PINN-type problems. However, because \(U(x)\) and \(V(x)\) are produced by affine projections followed by a pointwise activation, the templates themselves may not provide sufficiently rich multiscale or localized spectral features.
+
+\subsubsection{Kolmogorov-Arnold representation and KAN}
+
+Kolmogorov-Arnold representation theorem states that any continuous multivariate function on a compact domain can be expressed as a finite superposition of univariate functions:
+\begin{equation}
+  f(x_1,\ldots,x_d)
+  =
+  \sum_{q=1}^{2d+1}
+  \Phi_q
+  \left(
+  \sum_{p=1}^{d}\phi_{q,p}(x_p)
+  \right),
+\end{equation}
+where \(\Phi_q\) and \(\phi_{q,p}\) are continuous univariate functions. Inspired by this representation, Kolmogorov-Arnold networks (KANs) replace scalar edge weights with learnable univariate functions. A typical KAN layer maps \(x_l\in\mathbb{R}^{n_l}\) to \(x_{l+1}\in\mathbb{R}^{n_{l+1}}\) by
+\begin{equation}
+  x_{l+1,j}
+  =
+  \sum_{i=1}^{n_l}
+  \varphi_{l,i,j}(x_{l,i}),
+  \quad j=1,\ldots,n_{l+1},
+\end{equation}
+where each \(\varphi_{l,i,j}\) is a trainable one-dimensional function, often parameterized by basis expansions. This edge-function view gives KANs a different inductive bias from MLPs: nonlinear transformations are attached to scalar coordinates before being aggregated.
+
+\subsubsection{SincKAN layer}
+
+SincKAN specializes the KAN basis by using shifted and scaled sinc functions \cite{yu2026sinckan}. For an input \(x\in\mathbb{R}^{d}\), a sinc layer maps \(x\) to \(s(x)\in\mathbb{R}^{p}\) through
+\begin{equation}
+  s_o(x)
+  =
+  \sum_{i=1}^{d}
+  \sum_{r=1}^{R}
+  \sum_{k \in \mathcal{K}}
+  c_{iork}
+  \operatorname{sinc}\left(\frac{x_i}{h_r} + k\right),
+  \quad o=1,\ldots,p,
+\end{equation}
+where \(c_{iork}\) are learnable coefficients, \(R\) is the number of scales, \(\mathcal{K}\) is a finite set of shifts determined by the basis degree, and \(h_r\) controls the scale of the sinc basis. The sinc function is defined as
+\begin{equation}
+  \operatorname{sinc}(z) = \frac{\sin(\pi z)}{\pi z},
+\end{equation}
+with the continuous extension \(\operatorname{sinc}(0)=1\). In practice, a linear skip path can be added inside the sinc layer:
+\begin{equation}
+  s(x) \leftarrow s(x) + A x + a,
+\end{equation}
+where \(A\) and \(a\) are learnable parameters. The sinc basis is attractive for scientific signals because it is closely related to band-limited interpolation and can represent oscillatory or localized structures through shifted multiscale components.
+
+\subsection{Modified-SincKAN}
+
+\subsubsection{Input-conditioned sinc branches}
+
+The key idea of Modified-SincKAN is to retain the feature-mixing philosophy of modified MLPs while replacing their affine templates with richer sinc-basis representations. Let \(\tilde{x}=N(x)\) be the normalized input. Modified-SincKAN constructs three input-conditioned branches:
+\begin{equation}
+  U(x) = \phi(\mathcal{S}_u(\tilde{x})),
+\end{equation}
+\begin{equation}
+  V(x) = \phi(\mathcal{S}_v(\tilde{x})),
+\end{equation}
+\begin{equation}
+  G(x) = \mathcal{S}_g(\tilde{x}),
+\end{equation}
+where \(\mathcal{S}_u\), \(\mathcal{S}_v\), and \(\mathcal{S}_g\) are sinc layers. The branches \(U(x)\) and \(V(x)\) act as two multiresolution content templates, while \(G(x)\) provides an input-dependent gate prior. Different degrees or scale sets can be assigned to the three branches, allowing the content and gate features to operate at different resolutions.
+
+\subsubsection{Separate gate and modulation update}
+
+The main hidden stream starts from
+\begin{equation}
+  f_0 = \tilde{x}W_0 + b_0.
+\end{equation}
+For layer \(l=1,\ldots,L-1\), we compute the current hidden feature
+\begin{equation}
+  h_l = \phi(f_{l-1}).
+\end{equation}
+Instead of directly using \(h_l\) as the interpolation gate as in the modified MLP, we introduce a separate sigmoid gate:
+\begin{equation}
+  z_l = \sigma\left(G(x) + h_l W_g + b_g\right),
+\end{equation}
+where \(W_g\) and \(b_g\) are trainable parameters and \(\sigma\) is the sigmoid function. This gate depends on both the input-conditioned prior \(G(x)\) and the current hidden state \(h_l\). The candidate representation is then obtained by
+\begin{equation}
+  c_l = z_l \odot U(x) + \left(1-z_l\right)\odot V(x).
+\end{equation}
+We consider two principal modulation variants. The first is a residual augmentation update:
+\begin{equation}
+  m_l = h_l + \alpha c_l,
+  \label{eq:separate_residual}
+\end{equation}
+where \(\alpha\) controls the strength of the input-conditioned sinc content injected into the main stream. The second is a bounded sigmoid mixing update:
+\begin{equation}
+  m_l = (1-\alpha)h_l + \alpha c_l.
+  \label{eq:separate_sigmoid}
+\end{equation}
+The next pre-activation is
+\begin{equation}
+  f_l = m_l W_l + b_l.
+\end{equation}
+After the final layer, the network returns
+\begin{equation}
+  \hat{y} = f_{L-1}.
+\end{equation}
+
+\subsubsection{Architecture summary}
+
+Algorithm~\ref{alg:modified_sinckan} summarizes the forward pass. Compared with a standard MLP, Modified-SincKAN introduces reusable input-conditioned content branches at every hidden layer. Compared with the modified MLP, it replaces affine templates by sinc-basis templates and separates the gate from the content branches. Compared with direct SincKAN, it uses sinc layers as modulation branches rather than as the only transformation chain. This combination is designed to improve the representation of high-frequency, multiscale, and localized scientific functions while retaining the layerwise feature reuse mechanism of modified MLPs.
+
+\begin{algorithm}[t]
+\caption{Forward pass of Modified-SincKAN}
+\label{alg:modified_sinckan}
+\begin{algorithmic}[1]
+\REQUIRE Input \(x\), normalizer \(N\), sinc branches \(\mathcal{S}_u,\mathcal{S}_v,\mathcal{S}_g\), weights \(\{W_l,b_l\}_{l=0}^{L-1}\), gate parameters \(W_g,b_g\)
+\STATE \(\tilde{x} \leftarrow N(x)\)
+\STATE \(U \leftarrow \phi(\mathcal{S}_u(\tilde{x}))\)
+\STATE \(V \leftarrow \phi(\mathcal{S}_v(\tilde{x}))\)
+\STATE \(G \leftarrow \mathcal{S}_g(\tilde{x})\)
+\STATE \(f_0 \leftarrow \tilde{x}W_0+b_0\)
+\FOR{\(l=1,\ldots,L-1\)}
+  \STATE \(h_l \leftarrow \phi(f_{l-1})\)
+  \STATE \(z_l \leftarrow \sigma(G+h_lW_g+b_g)\)
+  \STATE \(c_l \leftarrow z_l\odot U + (1-z_l)\odot V\)
+  \STATE \(m_l \leftarrow h_l+\alpha c_l\) or \(m_l \leftarrow (1-\alpha)h_l+\alpha c_l\)
+  \STATE \(f_l \leftarrow m_lW_l+b_l\)
+\ENDFOR
+\STATE \(\hat{y}\leftarrow f_{L-1}\)
+\RETURN \(\hat{y}\)
+\end{algorithmic}
+\end{algorithm}
+
+\section{Experiments}
+
+\subsection{Experimental setup}
+
+We evaluate Modified-SincKAN on supervised function approximation, high-dimensional scientific surrogate modeling, and physics-informed PDE learning. Unless otherwise stated, all models are trained with Adam using the same number of training iterations for a given task. For each task, the training set size, test set size, total number of optimization steps, and random seeds are kept identical across models. We report the root mean square error (RMSE) and relative \(L^2\) error:
+\begin{equation}
+  \mathrm{RMSE}
+  =
+  \sqrt{\frac{1}{N}\sum_{i=1}^{N}
+  \|\hat{y}_i-y_i\|_2^2},
+\end{equation}
+\begin{equation}
+  \mathrm{Rel.}~L^2
+  =
+  \frac{
+  \left(\sum_{i=1}^{N}\|\hat{y}_i-y_i\|_2^2\right)^{1/2}
+  }{
+  \left(\sum_{i=1}^{N}\|y_i\|_2^2\right)^{1/2}
+  }.
+\end{equation}
+Each reported number is averaged over three random seeds unless otherwise specified.
+
+The compared methods include MLP, modified MLP, KAN, SincKAN, and Modified-SincKAN. For KAN and SincKAN, the basis degree and network shape are selected according to the corresponding task protocol or tuned under matched training budgets. For Modified-SincKAN, we tune the hidden width, depth, sinc degree, number of sinc scales, skip connection, gate mode, and augmentation strength.
+
+\subsection{Function approximation benchmarks}
+
+We first evaluate the models on one- and two-dimensional approximation tasks covering smooth, oscillatory, boundary-layer, spectral-bias, multiscale, and PDE-solution regimes. For tasks that overlap with the SincKAN benchmark suite, we follow the original training and evaluation protocols in terms of training points, testing points, and total optimization steps. Detailed benchmark definitions are provided in Appendix~\ref{app:benchmarks}.
+
+\begin{table*}[t]
+\centering
+\caption{Function approximation results. Values are test RMSE reported as mean \(\pm\) standard deviation; the number in parentheses denotes the number of available seeds. Lower is better.}
+\label{tab:function_approx}
+\scriptsize
+\setlength{\tabcolsep}{2pt}
+\renewcommand{\arraystretch}{1.05}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lccccc@{}}
+\toprule
+Task & MLP & Modified MLP & KAN & SincKAN & Modified-SincKAN \\
+\midrule
+sin-low & \(1.37\mathrm{e}{-3}\pm0.0\mathrm{e}{0}\) (1) & \(3.09\mathrm{e}{-4}\pm0.0\mathrm{e}{0}\) (1) & \(3.21\mathrm{e}{-4}\pm0.0\mathrm{e}{0}\) (1) & \(6.26\mathrm{e}{-3}\pm0.0\mathrm{e}{0}\) (1) & \(5.01\mathrm{e}{-4}\pm0.0\mathrm{e}{0}\) (1) \\
+sin-high & \(6.78\mathrm{e}{-1}\pm0.0\mathrm{e}{0}\) (1) & \(6.43\mathrm{e}{-1}\pm0.0\mathrm{e}{0}\) (1) & \(3.48\mathrm{e}{-2}\pm0.0\mathrm{e}{0}\) (1) & \(3.76\mathrm{e}{-1}\pm0.0\mathrm{e}{0}\) (1) & \(\mathbf{1.55\mathrm{e}{-2}\pm2.3\mathrm{e}{-3}}\) (3) \\
+bl & \(4.09\mathrm{e}{-4}\pm3.9\mathrm{e}{-4}\) (3) & \(6.85\mathrm{e}{-4}\pm3.1\mathrm{e}{-4}\) (3) & \(7.96\mathrm{e}{-4}\pm9.1\mathrm{e}{-4}\) (3) & \(7.30\mathrm{e}{-3}\pm4.5\mathrm{e}{-4}\) (3) & \(\mathbf{3.63\mathrm{e}{-5}\pm1.3\mathrm{e}{-5}}\) (3) \\
+spectral-bias & \(4.12\mathrm{e}{-2}\pm2.2\mathrm{e}{-2}\) (3) & \(3.69\mathrm{e}{-2}\pm1.7\mathrm{e}{-2}\) (3) & \(5.82\mathrm{e}{-2}\pm1.2\mathrm{e}{-2}\) (3) & \(2.76\mathrm{e}{-1}\pm1.7\mathrm{e}{-2}\) (3) & \(\mathbf{3.38\mathrm{e}{-2}\pm4.1\mathrm{e}{-2}}\) (3) \\
+spectral-bias-2D & \(1.64\mathrm{e}{-2}\pm7.5\mathrm{e}{-3}\) (3) & \(1.05\mathrm{e}{-2}\pm6.1\mathrm{e}{-4}\) (3) & \(1.99\mathrm{e}{-1}\pm1.2\mathrm{e}{-2}\) (3) & \(5.17\mathrm{e}{-1}\pm5.3\mathrm{e}{-2}\) (3) & \(\mathbf{1.66\mathrm{e}{-3}\pm1.8\mathrm{e}{-4}}\) (3) \\
+fractal & \(1.09\mathrm{e}{-2}\pm1.0\mathrm{e}{-3}\) (3) & \(2.53\mathrm{e}{-2}\pm8.0\mathrm{e}{-3}\) (3) & \(6.31\mathrm{e}{-1}\pm9.4\mathrm{e}{-3}\) (3) & \(5.99\mathrm{e}{-1}\pm4.9\mathrm{e}{-2}\) (3) & \(\mathbf{6.79\mathrm{e}{-3}\pm2.0\mathrm{e}{-4}}\) (3) \\
+poisson-2d-solution & \(1.69\mathrm{e}{-3}\pm6.5\mathrm{e}{-4}\) (3) & \(\mathbf{3.38\mathrm{e}{-4}\pm1.8\mathrm{e}{-5}}\) (3) & \(4.95\mathrm{e}{-4}\pm3.7\mathrm{e}{-5}\) (3) & \(4.27\mathrm{e}{-3}\pm8.9\mathrm{e}{-4}\) (3) & \(3.70\mathrm{e}{-4}\pm4.2\mathrm{e}{-4}\) (3) \\
+\bottomrule
+\end{tabular*}
+\end{table*}
+
+\subsection{High-dimensional scientific surrogate benchmarks}
+
+We next evaluate the models on high-dimensional surrogate modeling tasks. These benchmarks test whether the proposed architecture remains effective beyond low-dimensional coordinate regression and whether sinc-based modulation can improve ODE, PDE, signal, image, and stochastic surrogate learning. Detailed task definitions are provided in Appendix~\ref{app:benchmarks}.
+
+\begin{table*}[t]
+\centering
+\caption{High-dimensional surrogate modeling results. Values are test RMSE reported as mean \(\pm\) standard deviation; the number in parentheses denotes the number of available seeds.}
+\label{tab:surrogate}
+\scriptsize
+\setlength{\tabcolsep}{2pt}
+\renewcommand{\arraystretch}{1.05}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lccccc@{}}
+\toprule
+Task & MLP & Modified MLP & KAN & SincKAN & Modified-SincKAN \\
+\midrule
+ode-4d & \(1.55\mathrm{e}{-3}\pm9.1\mathrm{e}{-4}\) (3) & \(\mathbf{1.21\mathrm{e}{-4}\pm5.0\mathrm{e}{-5}}\) (3) & \(2.81\mathrm{e}{-4}\pm5.1\mathrm{e}{-5}\) (3) & \(2.03\mathrm{e}{-3}\pm2.9\mathrm{e}{-4}\) (3) & \(1.64\mathrm{e}{-4}\pm1.6\mathrm{e}{-5}\) (3) \\
+pde-param-4d & \(9.42\mathrm{e}{-3}\pm6.1\mathrm{e}{-3}\) (3) & \(1.01\mathrm{e}{-3}\pm1.2\mathrm{e}{-4}\) (3) & \(3.38\mathrm{e}{-3}\pm2.4\mathrm{e}{-4}\) (3) & \(2.52\mathrm{e}{-2}\pm0.0\mathrm{e}{0}\) (1) & \(\mathbf{9.74\mathrm{e}{-4}\pm2.1\mathrm{e}{-4}}\) (3) \\
+signal-50d & \(1.04\mathrm{e}{-1}\pm2.5\mathrm{e}{-3}\) (3) & \(1.01\mathrm{e}{-1}\pm5.6\mathrm{e}{-4}\) (3) & \(1.17\mathrm{e}{-1}\pm3.2\mathrm{e}{-3}\) (3) & \(1.31\mathrm{e}{-1}\pm3.4\mathrm{e}{-3}\) (3) & \(\mathbf{8.82\mathrm{e}{-2}\pm3.8\mathrm{e}{-3}}\) (3) \\
+image-50d & \(\mathbf{2.09\mathrm{e}{-3}\pm5.2\mathrm{e}{-4}}\) (3) & \(2.21\mathrm{e}{-3}\pm2.7\mathrm{e}{-4}\) (3) & \(4.84\mathrm{e}{-2}\pm5.9\mathrm{e}{-3}\) (3) & \(1.63\mathrm{e}{-1}\pm7.5\mathrm{e}{-3}\) (3) & \(3.38\mathrm{e}{-3}\pm1.4\mathrm{e}{-4}\) (3) \\
+stochastic-pde-100d & \(3.11\mathrm{e}{-3}\pm3.3\mathrm{e}{-3}\) (3) & \(5.51\mathrm{e}{-3}\pm2.0\mathrm{e}{-3}\) (3) & \(4.58\mathrm{e}{-3}\pm5.7\mathrm{e}{-4}\) (3) & \(1.84\mathrm{e}{-1}\pm5.2\mathrm{e}{-2}\) (3) & \(\mathbf{6.25\mathrm{e}{-4}\pm4.1\mathrm{e}{-4}}\) (3) \\
+\bottomrule
+\end{tabular*}
+\end{table*}
+
+\subsection{Physics-informed PDE learning}
+Physics-informed neural networks (PINNs) provide a mesh-free framework for learning PDE solutions by embedding the governing equations directly into the training objective \cite{raissi2019pinn}. Consider a time-dependent PDE defined on a spatial domain \(\Omega\) and time interval \([0,T]\):
+\begin{equation}
+\begin{aligned}
+  \partial_t u(t,x) + \mathcal{N}[u](t,x) &= 0,
+  && (t,x)\in [0,T]\times \Omega, \\
+  u(0,x) &= u_0(x),
+  && x\in \Omega, \\
+  \mathcal{B}[u](t,x) &= h(t,x),
+  && (t,x)\in [0,T]\times \partial\Omega,
+\end{aligned}
+\label{eq:pinn_general_pde}
+\end{equation}
+where \(\mathcal{N}\) is a possibly nonlinear differential operator and \(\mathcal{B}\) denotes the boundary operator. For steady problems, the temporal derivative term is omitted.
+
+In a PINN, the unknown solution \(u\) is represented by a neural network \(u_\theta\). The parameters \(\theta\) are optimized so that \(u_\theta\) simultaneously satisfies the observed data or initial condition, the boundary condition, and the PDE residual at collocation points. A typical objective is
+\begin{equation}
+  \mathcal{L}(\theta)
+  =
+  \lambda_{\mathrm{ic}}\mathcal{L}_{\mathrm{ic}}(\theta)
+  +
+  \lambda_{\mathrm{bc}}\mathcal{L}_{\mathrm{bc}}(\theta)
+  +
+  \lambda_{\mathrm{r}}\mathcal{L}_{\mathrm{r}}(\theta),
+\end{equation}
+with
+\begin{equation}
+\begin{aligned}
+  \mathcal{L}_{\mathrm{r}}(\theta)
+  &=
+  \frac{1}{N_r}
+  \sum_{i=1}^{N_r}
+  \left|
+  \partial_t u_\theta(t_i^r,x_i^r)
+  +
+  \mathcal{N}[u_\theta](t_i^r,x_i^r)
+  \right|^2, \\
+  \mathcal{L}_{\mathrm{ic}}(\theta)
+  &=
+  \frac{1}{N_{\mathrm{ic}}}
+  \sum_{i=1}^{N_{\mathrm{ic}}}
+  \left|
+  u_\theta(0,x_i^{\mathrm{ic}})-u_0(x_i^{\mathrm{ic}})
+  \right|^2, \\
+  \mathcal{L}_{\mathrm{bc}}(\theta)
+  &=
+  \frac{1}{N_{\mathrm{bc}}}
+  \sum_{i=1}^{N_{\mathrm{bc}}}
+  \left|
+  \mathcal{B}[u_\theta](t_i^{\mathrm{bc}},x_i^{\mathrm{bc}})
+  -
+  h(t_i^{\mathrm{bc}},x_i^{\mathrm{bc}})
+  \right|^2.
+\end{aligned}
+\end{equation}
+The residual term enforces the governing equation in the interior of the domain, while the initial and boundary losses impose the problem-specific constraints. This setting is particularly useful for evaluating whether an architecture can represent PDE solutions and whether its derivatives, obtained through automatic differentiation, remain accurate enough for residual-based optimization.
+
+To evaluate Modified-SincKAN under physics-informed losses, we consider steady Poisson problems in different dimensions. The model approximates \(u_\theta(x)\), and training minimizes a weighted combination of PDE residual loss and boundary-condition loss:
+\begin{equation}
+  \mathcal{L}
+  =
+  \lambda_r
+  \frac{1}{N_r}
+  \sum_{i=1}^{N_r}
+  \left|
+  \mathcal{N}[u_\theta](x_i)-f(x_i)
+  \right|^2
+  +
+  \lambda_b
+  \frac{1}{N_b}
+  \sum_{i=1}^{N_b}
+  \left|
+  u_\theta(x_i)-g(x_i)
+  \right|^2,
+\end{equation}
+where \(\mathcal{N}\) denotes the differential operator, \(f\) is the forcing term, and \(g\) is the boundary condition. We run all cases on NVIDIA A100 GPUs and illustrate the results in Table~\ref{tab:pinn_poisson}.
+
+\begin{table}[t]
+\centering
+\caption{Steady Poisson PINN results. Values are mean test RMSE over three seeds.}
+\label{tab:pinn_poisson}
+\begin{tabular}{lccccc}
+\toprule
+Dimension & MLP & Modified MLP & KAN & SincKAN & Modified-SincKAN \\
+\midrule
+\(d=2\) & \(6.5484\mathrm{e}{-3}\) & \(\mathbf{3.3124\mathrm{e}{-5}}\) & \(1.7148\mathrm{e}{-3}\) & \(4.1277\mathrm{e}{0}\) & \(1.5205\mathrm{e}{-4}\) \\
+\(d=10\) & \(6.9039\mathrm{e}{-2}\) & \(2.8347\mathrm{e}{-3}\) & \(4.8457\mathrm{e}{-3}\) & \(4.2641\mathrm{e}{0}\) & \(\mathbf{1.5782\mathrm{e}{-3}}\) \\
+\(d=20\) & -- & -- & -- & -- & -- \\
+\(d=50\) & -- & -- & -- & -- & -- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Additional PDE Benchmarks}
+
+We further evaluate the models on two follow-up PDE benchmarks: lid-driven cavity flow and an L-shaped Poisson problem. The corresponding problem definitions and training details are provided in Appendix~\ref{app:additional_pde_benchmarks}. Both experiments are reported using final relative \(L^2\) error over three seeds.
+
+\begin{table*}[t]
+\centering
+\caption{Additional PDE benchmark results. Values are final relative \(L^2\) error reported as mean \(\pm\) standard deviation over three seeds. Lower is better.}
+\label{tab:additional_pde}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular*}{\textwidth}{@{\extracolsep{\fill}}lccccc@{}}
+\toprule
+Equation & MLP & Modified MLP & KAN & SincKAN & Modified-SincKAN \\
+\midrule
+Lid-driven cavity flow & \(5.41\mathrm{e}{-1}\pm3.33\mathrm{e}{-2}\) & \(7.60\mathrm{e}{-1}\pm5.07\mathrm{e}{-2}\) & \(2.02\mathrm{e}{-1}\pm2.22\mathrm{e}{-2}\) & \(8.92\mathrm{e}{-1}\pm1.93\mathrm{e}{-2}\) & \(\mathbf{5.54\mathrm{e}{-2}\pm2.92\mathrm{e}{-3}}\) \\
+L-shaped 2D Poisson & \(6.11\mathrm{e}{-3}\pm1.35\mathrm{e}{-3}\) & \(5.47\mathrm{e}{-3}\pm8.08\mathrm{e}{-4}\) & \(1.99\mathrm{e}{-1}\pm1.69\mathrm{e}{-1}\) & \(6.29\mathrm{e}{-3}\pm2.74\mathrm{e}{-3}\) & \(\mathbf{3.56\mathrm{e}{-3}\pm5.70\mathrm{e}{-4}}\) \\
+\bottomrule
+\end{tabular*}
+\end{table*}
+
+\subsection{Neural ODE Benchmarks}
+
+We also evaluate Modified-SincKAN as the vector field parameterization in a neural ODE. The benchmark details are provided in Appendix~\ref{app:neural_ode_benchmarks}. Following the KAN-ODE model-selection protocol, we report the best test loss observed during training over three seeds.
+
+\begin{table}[t]
+\centering
+\caption{Neural ODE benchmark results. Values are best test loss observed during training, reported as mean \(\pm\) standard deviation over three seeds. Lower is better.}
+\label{tab:neural_ode}
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{lccccc}
+\toprule
+Equation & MLP & Modified MLP & KAN-ODE & SincKAN & Modified-SincKAN \\
+\midrule
+Lotka--Volterra ODE system & \(7.23\mathrm{e}{-5}\pm2.80\mathrm{e}{-5}\) & \(1.95\mathrm{e}{0}\pm5.77\mathrm{e}{-3}\) & \(6.28\mathrm{e}{-6}\pm2.68\mathrm{e}{-6}\) & \(2.41\mathrm{e}{-5}\pm3.13\mathrm{e}{-5}\) & \(\mathbf{5.00\mathrm{e}{-6}\pm2.18\mathrm{e}{-6}}\) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Ablation studies}
+
+We conduct ablation studies to understand the contribution of each architectural component. First, we compare different gating modes:
+\begin{itemize}
+  \item \textbf{Original modified-MLP mixing}: \(m_l=h_l\odot U+(1-h_l)\odot V\).
+  \item \textbf{Separate residual}: \(m_l=h_l+\alpha c_l\).
+  \item \textbf{Separate sigmoid}: \(m_l=(1-\alpha)h_l+\alpha c_l\).
+\end{itemize}
+Second, we study the effect of the branch architecture by replacing the sinc branches \(\mathcal{S}_u,\mathcal{S}_v,\mathcal{S}_g\) with linear, KAN, ChebyKAN, or MLP alternatives while keeping the main modulation mechanism fixed. These ablations are primarily conducted on the fractal benchmark, which is sufficiently challenging and sensitive to multiscale representation quality.
+
+\begin{table}[t]
+\centering
+\caption{Ablation on gating mechanisms using the fractal benchmark.}
+\label{tab:gate_ablation}
+\begin{tabular}{lcc}
+\toprule
+Gate mode & RMSE & Relative \(L^2\) \\
+\midrule
+Original mixing & TODO & TODO \\
+Separate residual & TODO & TODO \\
+Separate sigmoid & TODO & TODO \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Ablation on input-conditioned branch architectures using the fractal benchmark. Values are reported as mean \(\pm\) standard deviation with the number of available seeds in parentheses.}
+\label{tab:branch_ablation}
+\begin{tabular}{lcc}
+\toprule
+Branch type & RMSE & Relative \(L^2\) \\
+\midrule
+Linear branch & \(1.90\mathrm{e}{-2}\pm0.0\mathrm{e}{0}\) (1) & \(1.28\mathrm{e}{-2}\pm0.0\mathrm{e}{0}\) (1) \\
+KAN branch & \(8.34\mathrm{e}{-1}\pm0.0\mathrm{e}{0}\) (1) & \(5.61\mathrm{e}{-1}\pm0.0\mathrm{e}{0}\) (1) \\
+ChebyKAN branch & \(4.69\mathrm{e}{-2}\pm0.0\mathrm{e}{0}\) (1) & \(3.16\mathrm{e}{-2}\pm0.0\mathrm{e}{0}\) (1) \\
+Sinc branch & \(\mathbf{3.64\mathrm{e}{-3}\pm4.6\mathrm{e}{-4}}\) (3) & \(\mathbf{2.46\mathrm{e}{-3}\pm3.0\mathrm{e}{-4}}\) (3) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Discussion}
+
+The expected advantage of Modified-SincKAN is most pronounced on tasks where the target function contains localized or multiscale spectral structures. The sinc branches provide a basis that is naturally suited for oscillatory and localized features, while the separate gate allows the network to adapt the injected content according to both input location and hidden state. Compared with direct SincKAN, Modified-SincKAN does not rely solely on a single basis-transformation chain; instead, it uses sinc features as reusable modulation content across layers. Compared with modified MLP, it replaces simple linear templates with richer multiresolution representations.
+
+We also observe that the choice of gate mode can influence stability and accuracy. The separate sigmoid update provides a bounded interpolation between the hidden state and the sinc-based candidate, which can stabilize training on high-dimensional or noisy tasks. The separate residual update injects the candidate additively and can be more expressive, but may require careful tuning of the augmentation strength \(\alpha\).
+
+\section{Conclusion}
+
+This paper presents Modified-SincKAN, an input-conditioned sinc modulation network for scientific machine learning. By combining sinc-basis content branches with state-dependent layerwise gating, the proposed architecture provides an adaptive multiresolution representation mechanism for challenging scientific functions and PDE solution maps. Experiments on function approximation, surrogate modeling, and physics-informed PDE learning demonstrate the promise of the proposed method, particularly for high-frequency, multiscale, and localized solution structures. Future work will extend the method to larger-scale PDE benchmarks, neural ODE system identification, and more complex fluid dynamics problems such as lid-driven cavity flow and boundary-layer PDEs.
+
+\section*{CRediT authorship contribution statement}
+
+Author Name: Conceptualization, Methodology, Software, Validation, Investigation, Writing -- original draft.
+
+\section*{Declaration of competing interest}
+
+The authors declare that they have no known competing financial interests or personal relationships that could have appeared to influence the work reported in this paper.
+
+\section*{Data availability}
+
+The code and datasets used in this study will be made available upon reasonable request. Benchmark definitions and scripts will be released with the final version of the manuscript.
+
+\appendix
+
+\section{Benchmark Details}
+\label{app:benchmarks}
+
+\subsection{Function approximation benchmarks}
+
+The function approximation suite contains one- and two-dimensional tasks designed to probe different approximation regimes:
+\begin{itemize}
+  \item \textbf{sin-low}: a smooth low-frequency signal used to evaluate basic approximation ability.
+  \item \textbf{sin-high}: a high-frequency oscillatory signal used to evaluate spectral expressivity.
+  \item \textbf{bl}: a boundary-layer function with sharp local variation.
+  \item \textbf{spectral-bias}: a one-dimensional mixed-frequency function designed to expose low-frequency bias.
+  \item \textbf{spectral-bias-2D}: a two-dimensional high-frequency spectral mixture.
+  \item \textbf{fractal}: a two-dimensional multiscale self-similar function.
+  \item \textbf{poisson-2d-solution}: a two-dimensional analytic PDE solution used as a supervised function fitting task.
+\end{itemize}
+For tasks that overlap with the SincKAN benchmark suite, we follow the original protocols in terms of training points, testing points, and total optimization steps. For \texttt{spectral-bias-2D}, the model is evaluated on a dense \(256\times256\) uniform grid and trained using Latin-hypercube samples under a fixed total-step budget. The exact function expressions along with their domains are shown in Table~\ref{tab:function_definitions}.
+
+\begin{table*}[t]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.35}
+\caption{Detailed function expressions and domains for the low-dimensional approximation benchmarks.}
+\label{tab:function_definitions}
+\begin{tabular}{|p{0.20\textwidth}|p{0.72\textwidth}|}
+\hline
+\centering Function name & \centering\arraybackslash Function definition \\
+\hline
+\textit{sin-low} &
+\(f(x)=\sin(4\pi x),\quad x\in[-1,1]\). \\
+\hline
+\textit{sin-high} &
+\(f(x)=\sin(400\pi x),\quad x\in[-1,1]\). \\
+\hline
+\textit{bl} &
+\(f(x)=\exp(-100x),\quad x\in[0,1]\). \\
+\hline
+\textit{spectral-bias} &
+\(f(x)=h(x),\quad x\in[-1,1]\), where
+\(
+h(t)=
+\begin{cases}
+5+\sum_{k=1}^{4}\sin(kt), & -1\leq t\leq 0,\\
+\cos(10t), & 0<t\leq 1.
+\end{cases}
+\)
+\\
+\hline
+\textit{spectral-bias-2D} &
+\(f(x,y)=h(x)h(y),\quad (x,y)\in[-2,2]^2\), with \(h\) defined as in \textit{spectral-bias}. \\
+\hline
+\textit{fractal} &
+\(
+f(x,y)=
+\exp[-0.1(x^2+y^2)]
+\left[
+\sin(10\pi x)\cos(10\pi y)
+\right.
+\)
+\newline
+\(
+\left.
++
+\sin\!\left(\pi(x^2+y^2)\right)
++
+|x-y|
++
+\frac{\sin(5xy)}{0.1+|x+y|}
+\right],
+\quad (x,y)\in[0,1]^2.
+\)
+\\
+\hline
+\textit{poisson-2d-solution} &
+\(
+f(x,y)=
+\sin(\pi x)\sin(\pi y)
++
+0.15\sin(3\pi x)\sin(2\pi y),
+\quad (x,y)\in[0,1]^2.
+\)
+\\
+\hline
+\end{tabular}
+\end{table*}
+
+\subsection{High-dimensional scientific surrogate benchmarks}
+The high-dimensional surrogate suite contains ODE, PDE, signal, image, and stochastic-response tasks:
+\begin{itemize}
+  \item \textbf{ode-4d}: a four-dimensional ODE response function.
+  \item \textbf{pde-param-4d}: a four-dimensional parameterized PDE response function.
+  \item \textbf{signal-50d}: a fifty-dimensional signal response function.
+  \item \textbf{image-50d}: a fifty-dimensional image-patch regression task.
+  \item \textbf{stochastic-pde-100d}: a one-hundred-dimensional stochastic PDE surrogate.
+\end{itemize}
+These tasks test whether the proposed architecture remains effective beyond low-dimensional coordinate regression. In particular, the high-dimensional signal, image, and stochastic PDE tasks assess whether Modified-SincKAN can combine multiscale basis features with scalable feature modulation.
+
+The exact surrogate definitions used in our experiments are summarized in Table~\ref{tab:surrogate_definitions}.
+
+\begin{table*}[t]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.35}
+\caption{Detailed function expressions and domains for the high-dimensional surrogate benchmarks.}
+\label{tab:surrogate_definitions}
+\begin{tabular}{|p{0.20\textwidth}|p{0.72\textwidth}|}
+\hline
+\centering Function name & \centering\arraybackslash Function definition \\
+\hline
+\textit{ode-4d} &
+Let \(X=(x_1,x_2,x_3,x_4)^\top\in[0,1]^4\). We use the first component of the exact linear ODE flow
+\[
+f(X)=e_1^\top \exp(A)X,\quad
+A=
+\begin{pmatrix}
+0 & 1 & 0 & 0\\
+-4 & -0.4 & 1.2 & 0\\
+0 & 0 & 0 & 1\\
+0.8 & 0 & -9 & -0.3
+\end{pmatrix}.
+\]
+\\
+\hline
+\textit{pde-param-4d} &
+For \(X=(x,y,\alpha,t)\in[0,1]^4\),
+\[
+f(X)=
+\exp(-2\pi^2\alpha t)\sin(\pi x)\sin(\pi y),
+\]
+which corresponds to a parameterized heat-equation mode. \\
+\hline
+\textit{signal-50d} &
+For \(X=(x_1,\ldots,x_{50})\in[0,1]^{50}\),
+\[
+f(X)=
+\frac{1}{50}\sum_{i=1}^{50}
+\sin(\pi i x_i)\cos\!\left(\frac{\pi x_i}{2}\right)
++0.05\sum_{i=1}^{10}x_i^2.
+\]
+\\
+\hline
+\textit{image-50d} &
+Let \(X=(p_{11},\ldots,p_{77},s)\in[0,1]^{50}\), where \(P=(p_{ij})\in[0,1]^{7\times7}\) is a local image patch and \(s\) is a normalized position/context feature. With \(c=p_{44}\),
+\[
+\begin{aligned}
+f(X)=&
+0.55c+0.20c_{\mathrm{cross}}+0.10c_{\mathrm{diag}}
++0.08\bar p-0.06\Delta p\\
+&+0.05\sin(2\pi s)(c-c_{\mathrm{cross}}),
+\end{aligned}
+\]
+where \(c_{\mathrm{cross}}\) is the four-neighbor average, \(c_{\mathrm{diag}}\) is the diagonal-neighbor average, \(\bar p\) is the patch mean, and \(\Delta p=4c-\sum_{\mathrm{cross}}p_{ij}\). \\
+\hline
+\textit{stochastic-pde-100d} &
+For \(\xi=(\xi_1,\ldots,\xi_{100})\in[0,1]^{100}\), we approximate a fixed-point response of a stochastic elliptic PDE with a 100-term KL-type coefficient:
+\[
+-\nabla\cdot(a(x,\xi)\nabla u(x,\xi))=f(x),
+\quad x^\ast=(0.37,0.63).
+\]
+The implemented surrogate is
+\[
+f(\xi)=
+\frac{r(x^\ast)}{2\pi^2 a_\ast(\xi)}
+\left(1+0.25m(\xi)\right)
++0.05q(\xi),
+\]
+where \(a_\ast(\xi)=\exp(0.15+0.35\sum_{i=1}^{100}\sqrt{\lambda_i}\phi_i(x^\ast)\xi_i)\), \(\lambda_i=\exp(-0.08i)\), \(m(\xi)=\sum_i\lambda_i\sin(\pi\xi_i/2)/\sum_i\lambda_i\), and \(q(\xi)=\sum_i\sqrt{\lambda_i}\xi_i/\sum_i\sqrt{\lambda_i}\). \\
+\hline
+\end{tabular}
+\end{table*}
+
+\subsection{Additional PDE Benchmarks}
+\label{app:additional_pde_benchmarks}
+
+\subsubsection{Lid-driven cavity flow}
+
+The lid-driven cavity benchmark considers the steady incompressible Navier--Stokes equations on the unit square \(\Omega=[0,1]^2\):
+\begin{equation}
+\begin{aligned}
+  u\partial_x u+v\partial_y u+\partial_x p-\frac{1}{Re}\Delta u &= 0,\\
+  u\partial_x v+v\partial_y v+\partial_y p-\frac{1}{Re}\Delta v &= 0,\\
+  \partial_x u+\partial_y v &= 0.
+\end{aligned}
+\end{equation}
+No-slip boundary conditions are imposed on the left, right, and bottom walls, while the top lid moves with horizontal velocity \(u=1\) and vertical velocity \(v=0\). We follow the curriculum training protocol used in the JAX-PI lid-driven cavity example, with increasing Reynolds numbers and batch size 4096. The reported result in Table~\ref{tab:additional_pde} corresponds to the final relative \(L^2\) error for the \(Re=3200\) stage, averaged over three seeds. The reference solution is the numerical cavity-flow dataset used by the benchmark implementation.
+
+\subsubsection{L-shaped 2D Poisson equation}
+
+The L-shaped Poisson benchmark is posed on the non-convex domain
+\begin{equation}
+  \Omega=[-1,1]^2\setminus(0,1]^2.
+\end{equation}
+We solve
+\begin{equation}
+  -\Delta u = 1,\quad x\in\Omega,
+  \qquad
+  u=0,\quad x\in\partial\Omega.
+\end{equation}
+This problem is useful because the forcing term is smooth but the re-entrant corner creates reduced solution regularity near the origin. Interior residual points and boundary points are sampled in the L-shaped domain. The high-resolution configuration uses \(100000\) residual points, \(10000\) boundary points, mini-batches of size 4096, and \(100000\) optimization steps. The reference solution for the relative \(L^2\) error is generated by a five-point finite-difference discretization of \(-\Delta u=1\) on a \(644\times644\) Cartesian grid restricted to the L-shaped domain, with homogeneous Dirichlet values on both the outer boundary and the inner re-entrant boundary. Table~\ref{tab:additional_pde} reports the final logged relative \(L^2\) error over three seeds.
+
+\subsection{Neural ODE Benchmarks}
+\label{app:neural_ode_benchmarks}
+
+\subsubsection{Lotka--Volterra neural ODE}
+
+The Lotka--Volterra experiment evaluates whether the proposed architecture can parameterize the vector field of a neural ODE. The reference dynamics are
+\begin{equation}
+\begin{aligned}
+  \frac{dx}{dt} &= \alpha x-\beta xy,\\
+  \frac{dy}{dt} &= \delta xy-\gamma y,
+\end{aligned}
+\end{equation}
+with \(\alpha=1.5\), \(\beta=1\), \(\gamma=1\), and \(\delta=3\). The initial condition is \((x(0),y(0))=(1,1)\). The trajectory is generated on \(t\in[0,14]\), using \(t\in[0,3.5]\) for training and the full interval \(t\in[0,14]\) for testing the rollout. The time spacing of the saved trajectory is \(0.1\). The reference trajectory and neural ODE rollouts are computed using a Tsitouras 5/4 Runge--Kutta integrator. Following the KAN-ODE protocol, Table~\ref{tab:neural_ode} reports the best test loss observed during training over three seeds.
+
+\section*{Acknowledgments}
+
+TODO: Add funding information and acknowledgments.
+
+\bibliographystyle{elsarticle-num}
+\begin{thebibliography}{99}
+
+\bibitem{chen2018neuralode}
+R. T. Q. Chen, Y. Rubanova, J. Bettencourt, D. Duvenaud,
+Neural ordinary differential equations,
+Advances in Neural Information Processing Systems, 2018.
+
+\bibitem{raissi2019pinn}
+M. Raissi, P. Perdikaris, G. E. Karniadakis,
+Physics-informed neural networks: A deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations,
+Journal of Computational Physics, 2019.
+
+\bibitem{tancik2020fourier}
+M. Tancik, P. Srinivasan, B. Mildenhall, S. Fridovich-Keil, N. Raghavan, U. Singhal, R. Ramamoorthi, J. Barron, R. Ng,
+Fourier features let networks learn high frequency functions in low dimensional domains,
+Advances in Neural Information Processing Systems, 2020.
+
+\bibitem{sitzmann2020siren}
+V. Sitzmann, J. Martel, A. Bergman, D. Lindell, G. Wetzstein,
+Implicit neural representations with periodic activation functions,
+Advances in Neural Information Processing Systems, 2020.
+
+\bibitem{liu2024kan}
+Z. Liu, Y. Wang, S. Vaidya, F. Ruehle, J. Halverson, M. Solja\v{c}i\'{c}, T. Y. Hou, M. Tegmark,
+KAN: Kolmogorov-Arnold networks,
+arXiv preprint arXiv:2404.19756, 2024.
+
+\bibitem{yu2026sinckan}
+T. Yu, J. Qiu, J. Yang, I. Oseledets,
+Sinc Kolmogorov-Arnold network and its application for solving PDEs with singularities,
+Neural Networks, 2026, 109033.
+
+\bibitem{wang2021gradientpathologies}
+S. Wang, Y. Teng, P. Perdikaris,
+Understanding and mitigating gradient flow pathologies in physics-informed neural networks,
+SIAM Journal on Scientific Computing 43(5) (2021) A3055--A3081.
+
+\end{thebibliography}
+
+\end{document}

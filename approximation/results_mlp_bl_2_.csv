@@ -1,0 +1,2 @@
+datatype,network,seed,final_loss_mean,training_time,total_ite,train_mse,train_rmse,train_relative,test_mse,test_rmse,test_relative
+bl,mlp,2,1.6196059732465073e-05,746.6198523044586,100000,8.5675845e-07,0.00092561246,0.01296159,8.9764944e-07,0.00094744365,0.01333282
